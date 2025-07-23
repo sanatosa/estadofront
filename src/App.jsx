@@ -3,20 +3,30 @@ import {
   useColorMode, IconButton, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalCloseButton, Badge,
   SimpleGrid, Divider, useColorModeValue, Input, Alert, AlertIcon, Spinner,
-  Select, Table, Thead, Tbody, Tr, Th, Td, CloseButton, Stat, StatLabel, StatNumber, StatHelpText
+  Select, Table, Thead, Tbody, Tr, Th, Td, Stat, StatLabel, StatNumber, StatHelpText
 } from "@chakra-ui/react";
 import { MoonIcon, SunIcon, CopyIcon, InfoOutlineIcon, DownloadIcon } from "@chakra-ui/icons";
 import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { FaBoxes, FaEuroSign, FaLayerGroup, FaExclamationTriangle, FaStar, FaCrown } from "react-icons/fa";
 
 const BACKEND_URL = "https://estado-nl35.onrender.com"; // Cambia por tu backend real
 
 const GROUP_COLORS = [
-  "blue.400", "green.400", "purple.400", "cyan.400", "orange.400", "teal.400", "pink.400", "yellow.400"
+  "#3182ce", "#38a169", "#805ad5", "#00b5d8", "#ed8936", "#319795", "#d53f8c", "#ecc94b"
 ];
 
 function groupColor(i) {
   return GROUP_COLORS[i % GROUP_COLORS.length];
+}
+
+// ======== FORMATEADOR
+function formatNum(num) {
+  return Number(num).toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function formatInt(num) {
+  return Number(num).toLocaleString("es-ES");
 }
 
 // ======== HISTORIAL
@@ -36,7 +46,6 @@ function saveHistorial(snapshot) {
 function isEqualSnapshot(articulos1, articulos2) {
   if (!Array.isArray(articulos1) || !Array.isArray(articulos2)) return false;
   if (articulos1.length !== articulos2.length) return false;
-  // Ordena ambos por código para comparar
   const s1 = [...articulos1].sort((a,b)=>a.codigo.localeCompare(b.codigo));
   const s2 = [...articulos2].sort((a,b)=>a.codigo.localeCompare(b.codigo));
   for (let i=0; i<s1.length; ++i) {
@@ -61,10 +70,10 @@ export default function App() {
   const [codigos, setCodigos] = useState([]);
   const [grupoSeleccionado, setGrupoSeleccionado] = useState("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(""); // para la alerta verde
+  const [success, setSuccess] = useState("");
   const [diferencias, setDiferencias] = useState(null);
   const [busqueda, setBusqueda] = useState("");
-  const [modalStats, setModalStats] = useState(null); // stats del grupo consultado
+  const [modalStats, setModalStats] = useState(null);
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
@@ -104,18 +113,15 @@ export default function App() {
     setGrupoSeleccionado("");
     setDiferencias(null);
     try {
-      // 1. Resumen de grupos y novedades
       const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
       const data = await r0.json();
       setResumen(data);
-      setError(""); // Limpiar error previo si hay datos
+      setError("");
 
-      // 2. Snapshot de ventas: todos los artículos
       const articulos = await getAllArticulos();
       const snapshotNow = {};
       articulos.forEach(a => snapshotNow[a.codigo] = a.disponible);
 
-      // Novedades rápidas para la sección 1
       const snapshotPrev = getSnapshot();
       const altas = [], bajas = [], ventas = [];
       Object.keys(snapshotNow).forEach(c => {
@@ -155,28 +161,45 @@ export default function App() {
     let codigosSinGrupo = resumen.sinGrupo || 0;
     let topGrupo = "";
     let topGrupoNum = 0;
+    let valorMedio = 0;
+    let artMasStock = {codigo: "", descripcion: "", disponible: 0};
+    let artMasCaro = {codigo: "", descripcion: "", precioVenta: 0};
+
+    let valorTotal = 0;
+    let totalArticulos = 0;
+    let totalPrecio = 0;
+    let articulos = [];
+    if (historial.length) articulos = historial[historial.length-1].articulos || [];
+
+    articulos.forEach(a => {
+      valorTotal += (Number(a.disponible) * Number(a.precioVenta||0));
+      totalPrecio += Number(a.precioVenta||0);
+      totalArticulos++;
+      if (Number(a.disponible) > artMasStock.disponible) {
+        artMasStock = {codigo: a.codigo, descripcion: a.descripcion, disponible: Number(a.disponible)};
+      }
+      if (Number(a.precioVenta) > artMasCaro.precioVenta) {
+        artMasCaro = {codigo: a.codigo, descripcion: a.descripcion, precioVenta: Number(a.precioVenta)};
+      }
+    });
+    valorMedio = totalArticulos ? totalPrecio/totalArticulos : 0;
 
     Object.entries(resumen.porGrupo).forEach(([g, n])=>{
       stockTotal += n;
       if (n > topGrupoNum) { topGrupo = g; topGrupoNum = n; }
     });
 
-    // Valor total e inventario requiere consultar artículos
-    let valorTotal = 0;
-    let articulos = [];
-    if (historial.length) articulos = historial[historial.length-1].articulos || [];
-    articulos.forEach(a => {
-      valorTotal += (Number(a.disponible) * Number(a.precioVenta||0));
-    });
-
     return {
       stockTotal,
-      valorTotal: valorTotal.toFixed(2),
+      valorTotal: valorTotal,
       numGrupos,
       codigosSinGrupo,
       porcentajeSinGrupo: Math.round(100 * codigosSinGrupo / resumen.total),
       topGrupo,
-      topGrupoNum
+      topGrupoNum,
+      valorMedio,
+      artMasStock,
+      artMasCaro
     };
   }
 
@@ -213,8 +236,8 @@ export default function App() {
         const topArt = [...delGrupo].sort((a,b)=>b.disponible-a.disponible).slice(0,3);
         setModalStats({
           stockTotal,
-          valorTotal: valorTotal.toFixed(2),
-          precioMedio: precioMedio.toFixed(2),
+          valorTotal,
+          precioMedio,
           topArt
         });
       }
@@ -271,37 +294,39 @@ export default function App() {
           stockInicial: artIni.disponible,
           stockFinal: artFin.disponible,
           vendido: cantidad,
-          totalVenta: totalVenta.toFixed(2)
+          totalVenta: totalVenta
         });
-        // Por grupo
         if (!ventasPorGrupo[artIni.grupo || "SIN_GRUPO"]) ventasPorGrupo[artIni.grupo || "SIN_GRUPO"] = 0;
         ventasPorGrupo[artIni.grupo || "SIN_GRUPO"] += cantidad;
-        // Por artículo
         ventasPorArticulo[codigo] = { cantidad, totalVenta, descripcion: artIni.descripcion || "" };
       }
     });
     setTabla(ventas);
-    setTotalVendido(total.toFixed(2));
+    setTotalVendido(total);
 
     // Estadísticas de ventas
-    // Top grupos por unidades vendidas
-    const topGrupos = Object.entries(ventasPorGrupo).sort((a,b)=>b[1]-a[1]).slice(0,3);
-    // Top artículos por unidades y por valor
+    const topGrupos = Object.entries(ventasPorGrupo).sort((a,b)=>b[1]-a[1]).slice(0,5);
     const topArticulosUnidades = [...ventas].sort((a,b)=>b.vendido-a.vendido).slice(0,3);
     const topArticulosValor = [...ventas].sort((a,b)=>b.totalVenta-a.totalVenta).slice(0,3);
 
     setVentasStats({
       totalUnidades: ventas.reduce((sum,v)=>sum+v.vendido,0),
-      totalEuros: total.toFixed(2),
+      totalEuros: total,
       topGrupos,
       topArticulosUnidades,
-      topArticulosValor
+      topArticulosValor,
+      chartData: topGrupos.map(([g, u], i) => ({grupo: g, unidades: u, color: groupColor(i)}))
     });
   }
 
   function handleExportarExcel() {
     if (!tabla.length) return;
-    const ws = XLSX.utils.json_to_sheet(tabla);
+    const dataXLSX = tabla.map(row => ({
+      ...row,
+      precioVenta: formatNum(row.precioVenta),
+      totalVenta: formatNum(row.totalVenta)
+    }));
+    const ws = XLSX.utils.json_to_sheet(dataXLSX);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ventas");
     XLSX.writeFile(wb, "ventas.xlsx");
@@ -357,7 +382,6 @@ export default function App() {
           <AlertIcon /> {success}
         </Alert>
       )}
-      {/* SOLO muestra el error si NO tienes datos útiles */}
       {error && !resumen && (
         <Alert status="error" mb={4}><AlertIcon />{error}</Alert>
       )}
@@ -366,25 +390,34 @@ export default function App() {
       {stats && (
         <SimpleGrid columns={[1, 2, 3, 6]} spacing={4} mb={8}>
           <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
-            <StatLabel>Total stock actual</StatLabel>
-            <StatNumber>{stats.stockTotal}</StatNumber>
+            <StatLabel><HStack><FaBoxes /> <span>Total stock actual</span></HStack></StatLabel>
+            <StatNumber>{formatInt(stats.stockTotal)}</StatNumber>
           </Stat>
           <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
-            <StatLabel>Valor inventario</StatLabel>
-            <StatNumber>{stats.valorTotal} €</StatNumber>
+            <StatLabel><HStack><FaEuroSign /> <span>Valor inventario</span></HStack></StatLabel>
+            <StatNumber>{formatNum(stats.valorTotal)} €</StatNumber>
           </Stat>
           <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
-            <StatLabel>Grupos activos</StatLabel>
+            <StatLabel><HStack><FaLayerGroup /><span>Grupos activos</span></HStack></StatLabel>
             <StatNumber>{stats.numGrupos}</StatNumber>
           </Stat>
           <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
-            <StatLabel>% sin grupo</StatLabel>
+            <StatLabel><HStack><FaExclamationTriangle /><span>% sin grupo</span></HStack></StatLabel>
             <StatNumber>{stats.porcentajeSinGrupo}%</StatNumber>
           </Stat>
           <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
-            <StatLabel>Top grupo por stock</StatLabel>
-            <StatNumber>{stats.topGrupo}</StatNumber>
-            <StatHelpText>{stats.topGrupoNum} artículos</StatHelpText>
+            <StatLabel><HStack><FaStar /><span>Artículo más caro</span></HStack></StatLabel>
+            <StatNumber>{stats.artMasCaro.codigo}</StatNumber>
+            <StatHelpText>
+              {stats.artMasCaro.descripcion} · {formatNum(stats.artMasCaro.precioVenta)} €
+            </StatHelpText>
+          </Stat>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel><HStack><FaCrown /><span>Top stock artículo</span></HStack></StatLabel>
+            <StatNumber>{stats.artMasStock.codigo}</StatNumber>
+            <StatHelpText>
+              {stats.artMasStock.descripcion} · {formatInt(stats.artMasStock.disponible)}
+            </StatHelpText>
           </Stat>
         </SimpleGrid>
       )}
@@ -400,7 +433,7 @@ export default function App() {
         {resumen && (
           <VStack align="stretch" spacing={6}>
             <Text fontSize="2xl" fontWeight="bold" color="gray.600" mb={-2}>
-              Códigos activos: <Text as="span" color="blue.500">{resumen.total}</Text>
+              Códigos activos: <Text as="span" color="blue.500">{formatInt(resumen.total)}</Text>
             </Text>
             <SimpleGrid columns={[1, 2, 3]} spacing={5}>
               {Object.entries(resumen.porGrupo).map(([grupo, count], i) => (
@@ -421,13 +454,12 @@ export default function App() {
                   <Text fontWeight="bold" fontSize="lg" color={groupColor(i)} mb={2}>
                     {grupo}
                   </Text>
-                  <Text fontSize="4xl" fontWeight="extrabold">{count}</Text>
+                  <Text fontSize="4xl" fontWeight="extrabold">{formatInt(count)}</Text>
                   <Badge colorScheme="blue" position="absolute" top={4} right={4}>
                     Ver códigos
                   </Badge>
                 </Box>
               ))}
-              {/* Sin grupo */}
               <Box
                 bg={cardBg}
                 p={6}
@@ -444,7 +476,7 @@ export default function App() {
                 <Text fontWeight="bold" fontSize="lg" color="red.400" mb={2}>
                   Sin grupo
                 </Text>
-                <Text fontSize="4xl" fontWeight="extrabold">{resumen.sinGrupo}</Text>
+                <Text fontSize="4xl" fontWeight="extrabold">{formatInt(resumen.sinGrupo)}</Text>
                 <Badge colorScheme="red" position="absolute" top={4} right={4}>
                   Ver códigos
                 </Badge>
@@ -458,17 +490,17 @@ export default function App() {
             <SimpleGrid columns={[1,2,3]} spacing={2}>
               <Box>
                 <Badge colorScheme="green" mb={2}>Altas</Badge>
-                <Text fontSize="lg" fontWeight="bold">{diferencias.altas.length}</Text>
+                <Text fontSize="lg" fontWeight="bold">{formatInt(diferencias.altas.length)}</Text>
                 <Text fontSize="sm">{diferencias.altas.length > 0 ? diferencias.altas.join(", ") : "Ninguna"}</Text>
               </Box>
               <Box>
                 <Badge colorScheme="red" mb={2}>Bajas</Badge>
-                <Text fontSize="lg" fontWeight="bold">{diferencias.bajas.length}</Text>
+                <Text fontSize="lg" fontWeight="bold">{formatInt(diferencias.bajas.length)}</Text>
                 <Text fontSize="sm">{diferencias.bajas.length > 0 ? diferencias.bajas.join(", ") : "Ninguna"}</Text>
               </Box>
               <Box>
                 <Badge colorScheme="blue" mb={2}>Ventas (stock bajó)</Badge>
-                <Text fontSize="lg" fontWeight="bold">{diferencias.ventas.length}</Text>
+                <Text fontSize="lg" fontWeight="bold">{formatInt(diferencias.ventas.length)}</Text>
                 <Text fontSize="sm">
                   {diferencias.ventas.length > 0
                     ? diferencias.ventas.map(v=>`${v.codigo} (${v.de}→${v.a})`).join(", ")
@@ -491,15 +523,15 @@ export default function App() {
           <ModalBody>
             {modalStats && (
               <Box mb={4}>
-                <Text mb={1}><b>Stock total:</b> {modalStats.stockTotal}</Text>
-                <Text mb={1}><b>Valor total:</b> {modalStats.valorTotal} €</Text>
-                <Text mb={1}><b>Precio medio:</b> {modalStats.precioMedio} €</Text>
+                <Text mb={1}><b>Stock total:</b> {formatInt(modalStats.stockTotal)}</Text>
+                <Text mb={1}><b>Valor total:</b> {formatNum(modalStats.valorTotal)} €</Text>
+                <Text mb={1}><b>Precio medio:</b> {formatNum(modalStats.precioMedio)} €</Text>
                 {modalStats.topArt && modalStats.topArt.length > 0 && (
                   <Box mb={1}>
                     <b>Top 3 artículos por stock:</b>
                     <ul style={{marginLeft: "1em"}}>
                       {modalStats.topArt.map(a=>(
-                        <li key={a.codigo}>{a.codigo} ({a.descripcion || ""}): {a.disponible}</li>
+                        <li key={a.codigo}>{a.codigo} ({a.descripcion || ""}): {formatInt(a.disponible)}</li>
                       ))}
                     </ul>
                   </Box>
@@ -553,34 +585,54 @@ export default function App() {
             Descargar Excel
           </Button>
         </HStack>
-        {/* Estadísticas de ventas */}
+        {/* Estadísticas de ventas y GRÁFICO de barras */}
         {ventasStats && tabla.length > 0 && (
+          <>
           <SimpleGrid columns={[1,2,4]} spacing={3} mt={4} mb={4}>
             <Stat bg="gray.50" borderRadius="xl" p={2}>
               <StatLabel>Total unidades vendidas</StatLabel>
-              <StatNumber>{ventasStats.totalUnidades}</StatNumber>
+              <StatNumber>{formatInt(ventasStats.totalUnidades)}</StatNumber>
             </Stat>
             <Stat bg="gray.50" borderRadius="xl" p={2}>
               <StatLabel>Total vendido (€)</StatLabel>
-              <StatNumber>{ventasStats.totalEuros} €</StatNumber>
-            </Stat>
-            <Stat bg="gray.50" borderRadius="xl" p={2}>
-              <StatLabel>Top 3 grupos por ventas</StatLabel>
-              <StatHelpText>
-                {ventasStats.topGrupos && ventasStats.topGrupos.length
-                  ? ventasStats.topGrupos.map(([g,v])=>`${g}: ${v}`).join(" | ")
-                  : "-"}
-              </StatHelpText>
+              <StatNumber>{formatNum(ventasStats.totalEuros)} €</StatNumber>
             </Stat>
             <Stat bg="gray.50" borderRadius="xl" p={2}>
               <StatLabel>Top 3 artículos por unidades</StatLabel>
               <StatHelpText>
                 {ventasStats.topArticulosUnidades && ventasStats.topArticulosUnidades.length
-                  ? ventasStats.topArticulosUnidades.map(a=>`${a.codigo} (${a.vendido})`).join(" | ")
+                  ? ventasStats.topArticulosUnidades.map(a=>`${a.codigo} (${formatInt(a.vendido)})`).join(" | ")
+                  : "-"}
+              </StatHelpText>
+            </Stat>
+            <Stat bg="gray.50" borderRadius="xl" p={2}>
+              <StatLabel>Top 3 artículos por valor</StatLabel>
+              <StatHelpText>
+                {ventasStats.topArticulosValor && ventasStats.topArticulosValor.length
+                  ? ventasStats.topArticulosValor.map(a=>`${a.codigo} (${formatNum(a.totalVenta)} €)`).join(" | ")
                   : "-"}
               </StatHelpText>
             </Stat>
           </SimpleGrid>
+          {/* GRÁFICO DE BARRAS DE VENTAS POR GRUPO */}
+          {ventasStats.chartData && ventasStats.chartData.length > 0 && (
+            <Box w="100%" h={["240px", "300px"]} mb={6} bg="gray.50" rounded="xl" p={4} shadow="md">
+              <Heading size="sm" mb={3}>Ventas por grupo (unidades)</Heading>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={ventasStats.chartData}>
+                  <XAxis dataKey="grupo" stroke="#888" fontSize={13} />
+                  <YAxis stroke="#888" fontSize={13} allowDecimals={false}/>
+                  <Tooltip formatter={formatInt} />
+                  <Bar dataKey="unidades">
+                    {ventasStats.chartData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          )}
+          </>
         )}
       </Box>
       {tabla.length > 0 && (
@@ -605,16 +657,16 @@ export default function App() {
                   <Td><Badge colorScheme="blue">{row.codigo}</Badge></Td>
                   <Td>{row.descripcion}</Td>
                   <Td>{row.grupo}</Td>
-                  <Td isNumeric>{Number(row.precioVenta).toFixed(2)}</Td>
-                  <Td isNumeric>{row.stockInicial}</Td>
-                  <Td isNumeric>{row.stockFinal}</Td>
-                  <Td isNumeric>{row.vendido}</Td>
-                  <Td isNumeric><b>{row.totalVenta}</b></Td>
+                  <Td isNumeric>{formatNum(row.precioVenta)}</Td>
+                  <Td isNumeric>{formatInt(row.stockInicial)}</Td>
+                  <Td isNumeric>{formatInt(row.stockFinal)}</Td>
+                  <Td isNumeric>{formatInt(row.vendido)}</Td>
+                  <Td isNumeric><b>{formatNum(row.totalVenta)}</b></Td>
                 </Tr>
               ))}
               <Tr>
                 <Td colSpan={7}><b>TOTAL VENDIDO</b></Td>
-                <Td isNumeric><b>{Number(totalVendido).toFixed(2)} €</b></Td>
+                <Td isNumeric><b>{formatNum(totalVendido)} €</b></Td>
               </Tr>
             </Tbody>
           </Table>
