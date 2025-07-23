@@ -71,12 +71,17 @@ export default function App() {
 
   // === MODIFICADO: "Obtener resumen" también guarda snapshot ===
   const handleResumen = async () => {
-    setLoading(true); setError(""); setCodigos([]); setGrupoSeleccionado(""); setDiferencias(null);
+    setLoading(true);
+    setError("");
+    setCodigos([]);
+    setGrupoSeleccionado("");
+    setDiferencias(null);
     try {
       // 1. Resumen de grupos y novedades
       const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
       const data = await r0.json();
       setResumen(data);
+      setError(""); // Limpiar cualquier error previo si el resumen llega bien
 
       // 2. Snapshot de ventas: todos los artículos
       const articulos = await getAllArticulos();
@@ -122,6 +127,10 @@ export default function App() {
 
   // ========== HISTORIAL Y VENTAS AVANZADO ===========
   function handleComparar() {
+    if (historial.length < 2) {
+      setError("Debes guardar al menos dos snapshots antes de comparar.");
+      return;
+    }
     if (!fechaInicio || !fechaFin) {
       setError("Selecciona ambas fechas.");
       return;
@@ -225,7 +234,8 @@ export default function App() {
           </Button>
           <Button variant="outline" onClick={handleResetHistorial}>Borrar histórico (ventas)</Button>
         </HStack>
-        {error && <Alert status="error" mb={4}><AlertIcon />{error}</Alert>}
+        {/* SOLO muestra el error si NO tienes datos útiles */}
+        {error && !resumen && <Alert status="error" mb={4}><AlertIcon />{error}</Alert>}
         {resumen && (
           <VStack align="stretch" spacing={6}>
             <Text fontSize="2xl" fontWeight="bold" color="gray.600" mb={-2}>
@@ -346,9 +356,6 @@ export default function App() {
       <Box bg="white" p={4} rounded="xl" shadow="md" mt={10} mb={5}>
         <Heading size="md" mb={3}>Comparativa de ventas entre snapshots</Heading>
         <HStack spacing={4} align="center">
-          {/* <Button colorScheme="blue" size="md" onClick={handleGuardarSnapshot} isLoading={loading}>
-            Guardar estado actual (ventas)
-          </Button> */}
           <Text>Comparar desde:</Text>
           <Select value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} maxW={52}>
             <option value="">Elige fecha inicio</option>
