@@ -3,10 +3,10 @@ import {
   useColorMode, IconButton, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalCloseButton, Badge,
   SimpleGrid, Divider, useColorModeValue, Input, Alert, AlertIcon, Spinner,
-  Select, Table, Thead, Tbody, Tr, Th, Td
+  Select, Table, Thead, Tbody, Tr, Th, Td, CloseButton, Stat, StatLabel, StatNumber, StatHelpText
 } from "@chakra-ui/react";
 import { MoonIcon, SunIcon, CopyIcon, InfoOutlineIcon, DownloadIcon } from "@chakra-ui/icons";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 
 const BACKEND_URL = "https://estado-nl35.onrender.com"; // Cambia por tu backend real
@@ -33,15 +33,38 @@ function saveHistorial(snapshot) {
   localStorage.setItem("atosa_historial", JSON.stringify(historial));
 }
 
+function isEqualSnapshot(articulos1, articulos2) {
+  if (!Array.isArray(articulos1) || !Array.isArray(articulos2)) return false;
+  if (articulos1.length !== articulos2.length) return false;
+  // Ordena ambos por código para comparar
+  const s1 = [...articulos1].sort((a,b)=>a.codigo.localeCompare(b.codigo));
+  const s2 = [...articulos2].sort((a,b)=>a.codigo.localeCompare(b.codigo));
+  for (let i=0; i<s1.length; ++i) {
+    const a = s1[i], b = s2[i];
+    if (
+      a.codigo !== b.codigo ||
+      a.disponible !== b.disponible ||
+      a.precioVenta !== b.precioVenta ||
+      (a.grupo || "") !== (b.grupo || "") ||
+      (a.descripcion || "") !== (b.descripcion || "")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export default function App() {
-  // ----- Sección resumen por grupo (lo de antes)
+  // ----- Sección resumen por grupo
   const [resumen, setResumen] = useState(null);
   const [loading, setLoading] = useState(false);
   const [codigos, setCodigos] = useState([]);
   const [grupoSeleccionado, setGrupoSeleccionado] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState(""); // para la alerta verde
   const [diferencias, setDiferencias] = useState(null);
   const [busqueda, setBusqueda] = useState("");
+  const [modalStats, setModalStats] = useState(null); // stats del grupo consultado
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
@@ -50,7 +73,10 @@ export default function App() {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [tabla, setTabla] = useState([]);
+  const [ventasStats, setVentasStats] = useState({});
   const [totalVendido, setTotalVendido] = useState(0);
+
+  const timeoutRef = useRef();
 
   // ========== FUNCIONES DASHBOARD RESUMEN ===========
   function copiarLista() {
@@ -69,10 +95,11 @@ export default function App() {
     return (await res.json()).articulos;
   }
 
-  // === MODIFICADO: "Obtener resumen" también guarda snapshot ===
+  // === "Obtener resumen" también guarda snapshot SOLO si hay cambios ===
   const handleResumen = async () => {
     setLoading(true);
     setError("");
+    setSuccess("");
     setCodigos([]);
     setGrupoSeleccionado("");
     setDiferencias(null);
@@ -81,7 +108,7 @@ export default function App() {
       const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
       const data = await r0.json();
       setResumen(data);
-      setError(""); // Limpiar cualquier error previo si el resumen llega bien
+      setError(""); // Limpiar error previo si hay datos
 
       // 2. Snapshot de ventas: todos los artículos
       const articulos = await getAllArticulos();
@@ -99,26 +126,98 @@ export default function App() {
       setDiferencias({altas,bajas,ventas});
       saveSnapshot(snapshotNow);
 
-      // 3. GUARDAR SNAPSHOT EN HISTORIAL (NOVEDAD)
-      saveHistorial(articulos);
-      setHistorial(getHistorial());
+      // 3. GUARDAR SNAPSHOT EN HISTORIAL SÓLO SI CAMBIA
+      const oldHistorial = getHistorial();
+      const prev = oldHistorial.length ? oldHistorial[oldHistorial.length-1].articulos : [];
+      if (!isEqualSnapshot(articulos, prev)) {
+        saveHistorial(articulos);
+        setHistorial(getHistorial());
+        setSuccess("¡Nuevo snapshot guardado!");
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+      } else {
+        setSuccess("No hay cambios respecto al estado anterior, no se ha guardado un nuevo snapshot.");
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+      }
     } catch {
       setError("Error al obtener datos");
     }
     setLoading(false);
   };
 
+  // ======== ESTADÍSTICAS GENERALES
+  function getGeneralStats() {
+    if (!resumen || !resumen.total || !resumen.porGrupo) return null;
+    let stockTotal = 0;
+    let valorInventario = 0;
+    let numGrupos = Object.keys(resumen.porGrupo).length;
+    let codigosSinGrupo = resumen.sinGrupo || 0;
+    let topGrupo = "";
+    let topGrupoNum = 0;
+
+    Object.entries(resumen.porGrupo).forEach(([g, n])=>{
+      stockTotal += n;
+      if (n > topGrupoNum) { topGrupo = g; topGrupoNum = n; }
+    });
+
+    // Valor total e inventario requiere consultar artículos
+    let valorTotal = 0;
+    let articulos = [];
+    if (historial.length) articulos = historial[historial.length-1].articulos || [];
+    articulos.forEach(a => {
+      valorTotal += (Number(a.disponible) * Number(a.precioVenta||0));
+    });
+
+    return {
+      stockTotal,
+      valorTotal: valorTotal.toFixed(2),
+      numGrupos,
+      codigosSinGrupo,
+      porcentajeSinGrupo: Math.round(100 * codigosSinGrupo / resumen.total),
+      topGrupo,
+      topGrupoNum
+    };
+  }
+
+  // ====== CONSULTA CÓDIGOS DE GRUPO: calcula stats de ese grupo
   const handleVerCodigos = async grupo => {
     setLoading(true); setCodigos([]); setError(""); setGrupoSeleccionado(grupo);
+    setModalStats(null);
     try {
       const url = grupo === "SIN_GRUPO"
         ? `${BACKEND_URL}/api/sin-grupo`
         : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
       const res = await fetch(url);
       const d = await res.json();
-      setCodigos(d.sinGrupo || d.codigos || []);
+      const codigosGrupo = d.sinGrupo || d.codigos || [];
+      setCodigos(codigosGrupo);
       setBusqueda("");
       onOpen();
+
+      // stats grupo
+      if (historial.length) {
+        const arts = historial[historial.length-1].articulos || [];
+        const delGrupo = arts.filter(a => 
+          (grupo==="SIN_GRUPO" ? !a.grupo : a.grupo===grupo)
+          && codigosGrupo.includes(a.codigo)
+        );
+        let stockTotal=0, valorTotal=0, precioTotal=0;
+        delGrupo.forEach(a=>{
+          stockTotal += Number(a.disponible);
+          valorTotal += Number(a.disponible)*Number(a.precioVenta||0);
+          precioTotal += Number(a.precioVenta||0);
+        });
+        const precioMedio = delGrupo.length ? precioTotal/delGrupo.length : 0;
+        // Top 3 artículos por stock
+        const topArt = [...delGrupo].sort((a,b)=>b.disponible-a.disponible).slice(0,3);
+        setModalStats({
+          stockTotal,
+          valorTotal: valorTotal.toFixed(2),
+          precioMedio: precioMedio.toFixed(2),
+          topArt
+        });
+      }
     } catch {
       setError("Error al cargar códigos");
     }
@@ -154,6 +253,8 @@ export default function App() {
     // Calcular ventas (stock inicial > stock final)
     const ventas = [];
     let total = 0;
+    const ventasPorGrupo = {};
+    const ventasPorArticulo = {};
 
     Object.keys(mapIni).forEach(codigo => {
       const artIni = mapIni[codigo];
@@ -172,10 +273,30 @@ export default function App() {
           vendido: cantidad,
           totalVenta: totalVenta.toFixed(2)
         });
+        // Por grupo
+        if (!ventasPorGrupo[artIni.grupo || "SIN_GRUPO"]) ventasPorGrupo[artIni.grupo || "SIN_GRUPO"] = 0;
+        ventasPorGrupo[artIni.grupo || "SIN_GRUPO"] += cantidad;
+        // Por artículo
+        ventasPorArticulo[codigo] = { cantidad, totalVenta, descripcion: artIni.descripcion || "" };
       }
     });
     setTabla(ventas);
     setTotalVendido(total.toFixed(2));
+
+    // Estadísticas de ventas
+    // Top grupos por unidades vendidas
+    const topGrupos = Object.entries(ventasPorGrupo).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    // Top artículos por unidades y por valor
+    const topArticulosUnidades = [...ventas].sort((a,b)=>b.vendido-a.vendido).slice(0,3);
+    const topArticulosValor = [...ventas].sort((a,b)=>b.totalVenta-a.totalVenta).slice(0,3);
+
+    setVentasStats({
+      totalUnidades: ventas.reduce((sum,v)=>sum+v.vendido,0),
+      totalEuros: total.toFixed(2),
+      topGrupos,
+      topArticulosUnidades,
+      topArticulosValor
+    });
   }
 
   function handleExportarExcel() {
@@ -193,6 +314,7 @@ export default function App() {
     setFechaInicio("");
     setFechaFin("");
     setTotalVendido(0);
+    setVentasStats({});
   }
 
   function niceDate(fechaIso) {
@@ -206,6 +328,9 @@ export default function App() {
   const codigosFiltrados = codigos.filter(c =>
     !busqueda ? true : c.toString().toLowerCase().includes(busqueda.toLowerCase())
   );
+
+  // --- General stats (tarjetas)
+  const stats = getGeneralStats();
 
   return (
     <Box minH="100vh" bg={bg} px={[2, 8]} py={[4, 10]}>
@@ -226,6 +351,44 @@ export default function App() {
         />
       </HStack>
 
+      {/* Alerta de éxito o sin cambios */}
+      {success && (
+        <Alert status="success" mb={4} borderRadius="lg">
+          <AlertIcon /> {success}
+        </Alert>
+      )}
+      {/* SOLO muestra el error si NO tienes datos útiles */}
+      {error && !resumen && (
+        <Alert status="error" mb={4}><AlertIcon />{error}</Alert>
+      )}
+
+      {/* Tarjetas estadísticas generales */}
+      {stats && (
+        <SimpleGrid columns={[1, 2, 3, 6]} spacing={4} mb={8}>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel>Total stock actual</StatLabel>
+            <StatNumber>{stats.stockTotal}</StatNumber>
+          </Stat>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel>Valor inventario</StatLabel>
+            <StatNumber>{stats.valorTotal} €</StatNumber>
+          </Stat>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel>Grupos activos</StatLabel>
+            <StatNumber>{stats.numGrupos}</StatNumber>
+          </Stat>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel>% sin grupo</StatLabel>
+            <StatNumber>{stats.porcentajeSinGrupo}%</StatNumber>
+          </Stat>
+          <Stat bg={cardBg} shadow="md" borderRadius="xl" p={4}>
+            <StatLabel>Top grupo por stock</StatLabel>
+            <StatNumber>{stats.topGrupo}</StatNumber>
+            <StatHelpText>{stats.topGrupoNum} artículos</StatHelpText>
+          </Stat>
+        </SimpleGrid>
+      )}
+
       {/* Sección 1: Dashboard resumen grupos */}
       <VStack align="stretch" spacing={6}>
         <HStack spacing={3} mb={1}>
@@ -234,8 +397,6 @@ export default function App() {
           </Button>
           <Button variant="outline" onClick={handleResetHistorial}>Borrar histórico (ventas)</Button>
         </HStack>
-        {/* SOLO muestra el error si NO tienes datos útiles */}
-        {error && !resumen && <Alert status="error" mb={4}><AlertIcon />{error}</Alert>}
         {resumen && (
           <VStack align="stretch" spacing={6}>
             <Text fontSize="2xl" fontWeight="bold" color="gray.600" mb={-2}>
@@ -319,7 +480,7 @@ export default function App() {
         )}
       </VStack>
 
-      {/* Modal para lista de códigos */}
+      {/* Modal para lista de códigos y stats grupo */}
       <Modal isOpen={isOpen} onClose={onClose} size="xl" scrollBehavior="inside">
         <ModalOverlay />
         <ModalContent>
@@ -328,6 +489,23 @@ export default function App() {
           </ModalHeader>
           <ModalCloseButton />
           <ModalBody>
+            {modalStats && (
+              <Box mb={4}>
+                <Text mb={1}><b>Stock total:</b> {modalStats.stockTotal}</Text>
+                <Text mb={1}><b>Valor total:</b> {modalStats.valorTotal} €</Text>
+                <Text mb={1}><b>Precio medio:</b> {modalStats.precioMedio} €</Text>
+                {modalStats.topArt && modalStats.topArt.length > 0 && (
+                  <Box mb={1}>
+                    <b>Top 3 artículos por stock:</b>
+                    <ul style={{marginLeft: "1em"}}>
+                      {modalStats.topArt.map(a=>(
+                        <li key={a.codigo}>{a.codigo} ({a.descripcion || ""}): {a.disponible}</li>
+                      ))}
+                    </ul>
+                  </Box>
+                )}
+              </Box>
+            )}
             <Input
               placeholder="Buscar código..."
               mb={3}
@@ -352,7 +530,7 @@ export default function App() {
         </ModalContent>
       </Modal>
 
-      {/* Sección 2: Histórico avanzado de ventas */}
+      {/* Sección 2: Histórico avanzado de ventas y estadísticas de ventas */}
       <Box bg="white" p={4} rounded="xl" shadow="md" mt={10} mb={5}>
         <Heading size="md" mb={3}>Comparativa de ventas entre snapshots</Heading>
         <HStack spacing={4} align="center">
@@ -375,6 +553,35 @@ export default function App() {
             Descargar Excel
           </Button>
         </HStack>
+        {/* Estadísticas de ventas */}
+        {ventasStats && tabla.length > 0 && (
+          <SimpleGrid columns={[1,2,4]} spacing={3} mt={4} mb={4}>
+            <Stat bg="gray.50" borderRadius="xl" p={2}>
+              <StatLabel>Total unidades vendidas</StatLabel>
+              <StatNumber>{ventasStats.totalUnidades}</StatNumber>
+            </Stat>
+            <Stat bg="gray.50" borderRadius="xl" p={2}>
+              <StatLabel>Total vendido (€)</StatLabel>
+              <StatNumber>{ventasStats.totalEuros} €</StatNumber>
+            </Stat>
+            <Stat bg="gray.50" borderRadius="xl" p={2}>
+              <StatLabel>Top 3 grupos por ventas</StatLabel>
+              <StatHelpText>
+                {ventasStats.topGrupos && ventasStats.topGrupos.length
+                  ? ventasStats.topGrupos.map(([g,v])=>`${g}: ${v}`).join(" | ")
+                  : "-"}
+              </StatHelpText>
+            </Stat>
+            <Stat bg="gray.50" borderRadius="xl" p={2}>
+              <StatLabel>Top 3 artículos por unidades</StatLabel>
+              <StatHelpText>
+                {ventasStats.topArticulosUnidades && ventasStats.topArticulosUnidades.length
+                  ? ventasStats.topArticulosUnidades.map(a=>`${a.codigo} (${a.vendido})`).join(" | ")
+                  : "-"}
+              </StatHelpText>
+            </Stat>
+          </SimpleGrid>
+        )}
       </Box>
       {tabla.length > 0 && (
         <Box bg="white" p={4} rounded="xl" shadow="lg">
