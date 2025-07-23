@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const BACKEND_URL = "https://TU-BACKEND.onrender.com"; // Pon tu backend aquí
+const BACKEND_URL = "https://estado-nl35.onrender.com"; // Pon tu backend aquí
 
 function App() {
   const [resumen, setResumen] = useState(null);
