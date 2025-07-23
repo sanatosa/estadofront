@@ -1,5 +1,5 @@
 import {
-  Box, Heading, Text, HStack, VStack, Grid, GridItem, Button,
+  Box, Heading, Text, HStack, VStack, Button,
   useColorMode, IconButton, useDisclosure, Modal, ModalOverlay,
   ModalContent, ModalHeader, ModalBody, ModalCloseButton, Badge,
   SimpleGrid, Divider, useColorModeValue, Input, Alert, AlertIcon, Spinner
@@ -7,7 +7,7 @@ import {
 import { MoonIcon, SunIcon, CopyIcon, InfoOutlineIcon } from "@chakra-ui/icons";
 import { useState } from "react";
 
-const BACKEND_URL = "https://TU-BACKEND.onrender.com"; // pon aquí tu url real
+const BACKEND_URL = "https://estado-nl35.onrender.com"; // <<<<<< tu backend aquí
 
 const GROUP_COLORS = [
   "blue.400", "green.400", "purple.400", "cyan.400", "orange.400", "teal.400", "pink.400", "yellow.400"
@@ -28,12 +28,10 @@ export default function App() {
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  // Para copiar al portapapeles
   function copiarLista() {
     navigator.clipboard.writeText(codigos.join(", "));
   }
 
-  // Local storage para histórico
   function getSnapshot() {
     try { return JSON.parse(localStorage.getItem("atosa_snapshot") || "{}"); }
     catch { return {}; }
@@ -96,11 +94,9 @@ export default function App() {
     setDiferencias(null);
   };
 
-  // Estilos modernos
   const bg = useColorModeValue("gray.50", "gray.900");
   const cardBg = useColorModeValue("white", "gray.800");
 
-  // Filtro de búsqueda en modal
   const codigosFiltrados = codigos.filter(c =>
     !busqueda ? true : c.toString().toLowerCase().includes(busqueda.toLowerCase())
   );
