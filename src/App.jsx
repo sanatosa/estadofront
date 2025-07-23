@@ -9,7 +9,7 @@ import { MoonIcon, SunIcon, CopyIcon, InfoOutlineIcon, DownloadIcon } from "@cha
 import { useState } from "react";
 import * as XLSX from "xlsx";
 
-const BACKEND_URL = "https://estado-nl35.onrender.com"; // << PON TU BACKEND
+const BACKEND_URL = "https://estado-nl35.onrender.com"; // Cambia por tu backend real
 
 const GROUP_COLORS = [
   "blue.400", "green.400", "purple.400", "cyan.400", "orange.400", "teal.400", "pink.400", "yellow.400"
@@ -69,28 +69,34 @@ export default function App() {
     return (await res.json()).articulos;
   }
 
+  // === MODIFICADO: "Obtener resumen" también guarda snapshot ===
   const handleResumen = async () => {
     setLoading(true); setError(""); setCodigos([]); setGrupoSeleccionado(""); setDiferencias(null);
     try {
+      // 1. Resumen de grupos y novedades
       const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
       const data = await r0.json();
       setResumen(data);
 
+      // 2. Snapshot de ventas: todos los artículos
       const articulos = await getAllArticulos();
       const snapshotNow = {};
       articulos.forEach(a => snapshotNow[a.codigo] = a.disponible);
 
+      // Novedades rápidas para la sección 1
       const snapshotPrev = getSnapshot();
       const altas = [], bajas = [], ventas = [];
-
       Object.keys(snapshotNow).forEach(c => {
         if (!(c in snapshotPrev)) altas.push(c);
         else if (snapshotNow[c] < snapshotPrev[c]) ventas.push({codigo:c, de:snapshotPrev[c], a:snapshotNow[c]});
       });
       Object.keys(snapshotPrev).forEach(c => { if (!(c in snapshotNow)) bajas.push(c) });
-
       setDiferencias({altas,bajas,ventas});
       saveSnapshot(snapshotNow);
+
+      // 3. GUARDAR SNAPSHOT EN HISTORIAL (NOVEDAD)
+      saveHistorial(articulos);
+      setHistorial(getHistorial());
     } catch {
       setError("Error al obtener datos");
     }
@@ -115,22 +121,6 @@ export default function App() {
   };
 
   // ========== HISTORIAL Y VENTAS AVANZADO ===========
-  async function handleGuardarSnapshot() {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/all-articulos`);
-      const data = await res.json();
-      const articulos = Array.isArray(data.articulos) ? data.articulos : [];
-      saveHistorial(articulos);
-      setHistorial(getHistorial());
-      alert("¡Estado guardado correctamente!");
-    } catch (e) {
-      setError("Error al guardar el snapshot.");
-    }
-    setLoading(false);
-  }
-
   function handleComparar() {
     if (!fechaInicio || !fechaFin) {
       setError("Selecciona ambas fechas.");
@@ -356,9 +346,9 @@ export default function App() {
       <Box bg="white" p={4} rounded="xl" shadow="md" mt={10} mb={5}>
         <Heading size="md" mb={3}>Comparativa de ventas entre snapshots</Heading>
         <HStack spacing={4} align="center">
-          <Button colorScheme="blue" size="md" onClick={handleGuardarSnapshot} isLoading={loading}>
+          {/* <Button colorScheme="blue" size="md" onClick={handleGuardarSnapshot} isLoading={loading}>
             Guardar estado actual (ventas)
-          </Button>
+          </Button> */}
           <Text>Comparar desde:</Text>
           <Select value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} maxW={52}>
             <option value="">Elige fecha inicio</option>
@@ -419,7 +409,7 @@ export default function App() {
       {historial.length < 2 && (
         <VStack bg="white" mt={8} p={8} rounded="2xl" shadow="xl" align="center">
           <Text fontSize="xl" color="gray.600" textAlign="center">
-            Haz clic en <b>“Guardar estado actual (ventas)”</b> cada vez que quieras registrar el stock.<br />
+            Haz clic en <b>“Obtener resumen”</b> cada vez que quieras registrar el stock.<br />
             Cuando haya <b>dos snapshots o más</b>, podrás comparar ventas entre fechas, analizar por artículo y descargar el informe en Excel.
           </Text>
         </VStack>
