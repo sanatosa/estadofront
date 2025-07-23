@@ -1,116 +1,136 @@
 import {
-  Box, Heading, Text, HStack, VStack, Button,
-  useColorMode, IconButton, useDisclosure, Modal, ModalOverlay,
-  ModalContent, ModalHeader, ModalBody, ModalCloseButton, Badge,
-  SimpleGrid, Divider, useColorModeValue, Input, Alert, AlertIcon, Spinner
+  Box, Heading, Text, HStack, VStack, Button, useColorMode, IconButton, Alert,
+  AlertIcon, Select, Table, Thead, Tbody, Tr, Th, Td, Badge, Spinner
 } from "@chakra-ui/react";
-import { MoonIcon, SunIcon, CopyIcon, InfoOutlineIcon } from "@chakra-ui/icons";
+import { MoonIcon, SunIcon, DownloadIcon } from "@chakra-ui/icons";
 import { useState } from "react";
+import * as XLSX from "xlsx";
 
-const BACKEND_URL = "https://estado-nl35.onrender.com"; // <<<<<< tu backend aquí
+const BACKEND_URL = "https://estado-nl35.onrender.com"; // pon aquí tu backend real
 
-const GROUP_COLORS = [
-  "blue.400", "green.400", "purple.400", "cyan.400", "orange.400", "teal.400", "pink.400", "yellow.400"
-];
-
-function groupColor(i) {
-  return GROUP_COLORS[i % GROUP_COLORS.length];
+// =============== GUARDADO Y LECTURA DE HISTORIAL =================
+function getHistorial() {
+  try { return JSON.parse(localStorage.getItem("atosa_historial") || "[]"); }
+  catch { return []; }
+}
+function saveHistorial(snapshot) {
+  const historial = getHistorial();
+  historial.push({
+    fecha: new Date().toISOString(),
+    articulos: snapshot
+  });
+  localStorage.setItem("atosa_historial", JSON.stringify(historial));
 }
 
+// =============== APP PRINCIPAL =================
+
 export default function App() {
-  const [resumen, setResumen] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [codigos, setCodigos] = useState([]);
-  const [grupoSeleccionado, setGrupoSeleccionado] = useState("");
   const [error, setError] = useState("");
-  const [diferencias, setDiferencias] = useState(null);
-  const [busqueda, setBusqueda] = useState("");
+  const [historial, setHistorial] = useState(getHistorial());
+  const [fechaInicio, setFechaInicio] = useState("");
+  const [fechaFin, setFechaFin] = useState("");
+  const [tabla, setTabla] = useState([]);
+  const [totalVendido, setTotalVendido] = useState(0);
   const { colorMode, toggleColorMode } = useColorMode();
-  const { isOpen, onOpen, onClose } = useDisclosure();
 
-  function copiarLista() {
-    navigator.clipboard.writeText(codigos.join(", "));
-  }
-
-  function getSnapshot() {
-    try { return JSON.parse(localStorage.getItem("atosa_snapshot") || "{}"); }
-    catch { return {}; }
-  }
-  function saveSnapshot(sn) {
-    localStorage.setItem("atosa_snapshot", JSON.stringify(sn));
-  }
-  async function getAllArticulos() {
-    const res = await fetch(`${BACKEND_URL}/api/all-articulos`);
-    return (await res.json()).articulos;
-  }
-
-  const handleResumen = async () => {
-    setLoading(true); setError(""); setCodigos([]); setGrupoSeleccionado(""); setDiferencias(null);
+  // ====== OBTENER Y GUARDAR SNAPSHOT DE ARTÍCULOS =======
+  async function handleGuardarSnapshot() {
+    setLoading(true);
+    setError("");
     try {
-      const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
-      const data = await r0.json();
-      setResumen(data);
-
-      const articulos = await getAllArticulos();
-      const snapshotNow = {};
-      articulos.forEach(a => snapshotNow[a.codigo] = a.disponible);
-
-      const snapshotPrev = getSnapshot();
-      const altas = [], bajas = [], ventas = [];
-
-      Object.keys(snapshotNow).forEach(c => {
-        if (!(c in snapshotPrev)) altas.push(c);
-        else if (snapshotNow[c] < snapshotPrev[c]) ventas.push({codigo:c, de:snapshotPrev[c], a:snapshotNow[c]});
-      });
-      Object.keys(snapshotPrev).forEach(c => { if (!(c in snapshotNow)) bajas.push(c) });
-
-      setDiferencias({altas,bajas,ventas});
-      saveSnapshot(snapshotNow);
-    } catch {
-      setError("Error al obtener datos");
+      const res = await fetch(`${BACKEND_URL}/api/all-articulos`);
+      const data = await res.json();
+      const articulos = Array.isArray(data.articulos) ? data.articulos : [];
+      saveHistorial(articulos);
+      setHistorial(getHistorial());
+      alert("¡Estado guardado correctamente!");
+    } catch (e) {
+      setError("Error al guardar el snapshot.");
     }
     setLoading(false);
-  };
+  }
 
-  const handleVerCodigos = async grupo => {
-    setLoading(true); setCodigos([]); setError(""); setGrupoSeleccionado(grupo);
-    try {
-      const url = grupo === "SIN_GRUPO"
-        ? `${BACKEND_URL}/api/sin-grupo`
-        : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
-      const res = await fetch(url);
-      const d = await res.json();
-      setCodigos(d.sinGrupo || d.codigos || []);
-      setBusqueda("");
-      onOpen();
-    } catch {
-      setError("Error al cargar códigos");
+  // ====== COMPARAR ENTRE DOS FECHAS =======
+  function handleComparar() {
+    if (!fechaInicio || !fechaFin) {
+      setError("Selecciona ambas fechas.");
+      return;
     }
-    setLoading(false);
-  };
+    setError("");
+    const idx1 = historial.findIndex(h => h.fecha === fechaInicio);
+    const idx2 = historial.findIndex(h => h.fecha === fechaFin);
+    if (idx1 === -1 || idx2 === -1) {
+      setError("Error en selección de fechas.");
+      return;
+    }
+    let ini = historial[idx1].articulos;
+    let fin = historial[idx2].articulos;
 
-  const handleReset = () => {
-    localStorage.removeItem("atosa_snapshot");
-    setDiferencias(null);
-  };
+    // Map: codigo -> articulo
+    const mapIni = {};
+    ini.forEach(a => { mapIni[a.codigo] = a; });
+    const mapFin = {};
+    fin.forEach(a => { mapFin[a.codigo] = a; });
 
-  const bg = useColorModeValue("gray.50", "gray.900");
-  const cardBg = useColorModeValue("white", "gray.800");
+    // Calcular ventas (stock inicial > stock final)
+    const ventas = [];
+    let total = 0;
 
-  const codigosFiltrados = codigos.filter(c =>
-    !busqueda ? true : c.toString().toLowerCase().includes(busqueda.toLowerCase())
-  );
+    Object.keys(mapIni).forEach(codigo => {
+      const artIni = mapIni[codigo];
+      const artFin = mapFin[codigo];
+      if (artFin && Number(artIni.disponible) > Number(artFin.disponible)) {
+        const cantidad = Number(artIni.disponible) - Number(artFin.disponible);
+        const totalVenta = cantidad * Number(artIni.precioVenta || 0);
+        total += totalVenta;
+        ventas.push({
+          codigo,
+          descripcion: artIni.descripcion || "",
+          grupo: artIni.grupo || "",
+          precioVenta: artIni.precioVenta || "",
+          stockInicial: artIni.disponible,
+          stockFinal: artFin.disponible,
+          vendido: cantidad,
+          totalVenta: totalVenta.toFixed(2)
+        });
+      }
+    });
+    setTabla(ventas);
+    setTotalVendido(total.toFixed(2));
+  }
 
+  // ====== EXPORTAR A EXCEL =======
+  function handleExportarExcel() {
+    if (!tabla.length) return;
+    const ws = XLSX.utils.json_to_sheet(tabla);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Ventas");
+    XLSX.writeFile(wb, "ventas.xlsx");
+  }
+
+  // ====== RESET HISTORIAL =======
+  function handleResetHistorial() {
+    localStorage.removeItem("atosa_historial");
+    setHistorial([]);
+    setTabla([]);
+    setFechaInicio("");
+    setFechaFin("");
+    setTotalVendido(0);
+  }
+
+  // ====== FORMATO DE FECHA =======
+  function niceDate(fechaIso) {
+    const d = new Date(fechaIso);
+    return d.toLocaleString("es-ES", { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  // ====== UI =======
   return (
-    <Box minH="100vh" bg={bg} px={[2, 8]} py={[4, 10]}>
+    <Box minH="100vh" bg={colorMode === "light" ? "gray.50" : "gray.900"} px={[2, 8]} py={[4, 10]}>
       {/* Header */}
       <HStack justify="space-between" mb={8}>
-        <HStack spacing={3}>
-          <InfoOutlineIcon w={7} h={7} color="blue.400" />
-          <Heading size="lg" fontWeight="extrabold" letterSpacing="wide">
-            ATOSA <Text as="span" color="blue.400">Dashboard</Text>
-          </Heading>
-        </HStack>
+        <Heading>ATOSA <Text as="span" color="blue.400">Dashboard</Text></Heading>
         <IconButton
           aria-label="Cambiar modo oscuro/claro"
           icon={colorMode === "light" ? <MoonIcon /> : <SunIcon />}
@@ -120,134 +140,91 @@ export default function App() {
         />
       </HStack>
 
-      {/* Botones principales */}
-      <HStack spacing={3} mb={8}>
-        <Button colorScheme="blue" size="lg" onClick={handleResumen} isLoading={loading}>
-          Obtener resumen
+      {/* Botones y alertas */}
+      <HStack spacing={3} mb={5}>
+        <Button colorScheme="blue" size="md" onClick={handleGuardarSnapshot} isLoading={loading}>
+          Guardar estado actual (snapshot)
         </Button>
-        <Button variant="outline" onClick={handleReset}>Borrar histórico</Button>
+        <Button variant="outline" size="md" onClick={handleResetHistorial}>
+          Borrar historial
+        </Button>
       </HStack>
-
-      {/* Alertas y errores */}
       {error && <Alert status="error" mb={4}><AlertIcon />{error}</Alert>}
 
-      {/* KPI Cards de grupos */}
-      {resumen && (
-        <VStack align="stretch" spacing={6}>
-          <Text fontSize="2xl" fontWeight="bold" color="gray.600" mb={-2}>
-            Códigos activos: <Text as="span" color="blue.500">{resumen.total}</Text>
-          </Text>
-          <SimpleGrid columns={[1, 2, 3]} spacing={5}>
-            {Object.entries(resumen.porGrupo).map(([grupo, count], i) => (
-              <Box
-                key={grupo}
-                bg={cardBg}
-                p={6}
-                rounded="2xl"
-                shadow="xl"
-                borderLeft="8px solid"
-                borderColor={groupColor(i)}
-                transition="transform .18s"
-                _hover={{ transform: "scale(1.03)", boxShadow: "2xl" }}
-                cursor="pointer"
-                onClick={() => handleVerCodigos(grupo)}
-                position="relative"
-              >
-                <Text fontWeight="bold" fontSize="lg" color={groupColor(i)} mb={2}>
-                  {grupo}
-                </Text>
-                <Text fontSize="4xl" fontWeight="extrabold">{count}</Text>
-                <Badge colorScheme="blue" position="absolute" top={4} right={4}>
-                  Ver códigos
-                </Badge>
-              </Box>
-            ))}
-            {/* Sin grupo */}
-            <Box
-              bg={cardBg}
-              p={6}
-              rounded="2xl"
-              shadow="xl"
-              borderLeft="8px solid"
-              borderColor="red.400"
-              transition="transform .18s"
-              _hover={{ transform: "scale(1.03)", boxShadow: "2xl" }}
-              cursor="pointer"
-              onClick={() => handleVerCodigos("SIN_GRUPO")}
-              position="relative"
-            >
-              <Text fontWeight="bold" fontSize="lg" color="red.400" mb={2}>
-                Sin grupo
-              </Text>
-              <Text fontSize="4xl" fontWeight="extrabold">{resumen.sinGrupo}</Text>
-              <Badge colorScheme="red" position="absolute" top={4} right={4}>
-                Ver códigos
-              </Badge>
-            </Box>
-          </SimpleGrid>
-        </VStack>
-      )}
-
-      {/* Novedades / Diferencias */}
-      {diferencias && (
-        <Box bg={cardBg} rounded="xl" shadow="md" mt={10} p={6}>
-          <Heading size="md" mb={3}>Novedades desde la última consulta</Heading>
-          <SimpleGrid columns={[1,2,3]} spacing={2}>
-            <Box>
-              <Badge colorScheme="green" mb={2}>Altas</Badge>
-              <Text fontSize="lg" fontWeight="bold">{diferencias.altas.length}</Text>
-              <Text fontSize="sm">{diferencias.altas.length > 0 ? diferencias.altas.join(", ") : "Ninguna"}</Text>
-            </Box>
-            <Box>
-              <Badge colorScheme="red" mb={2}>Bajas</Badge>
-              <Text fontSize="lg" fontWeight="bold">{diferencias.bajas.length}</Text>
-              <Text fontSize="sm">{diferencias.bajas.length > 0 ? diferencias.bajas.join(", ") : "Ninguna"}</Text>
-            </Box>
-            <Box>
-              <Badge colorScheme="blue" mb={2}>Ventas (stock bajó)</Badge>
-              <Text fontSize="lg" fontWeight="bold">{diferencias.ventas.length}</Text>
-              <Text fontSize="sm">
-                {diferencias.ventas.length > 0
-                  ? diferencias.ventas.map(v=>`${v.codigo} (${v.de}→${v.a})`).join(", ")
-                  : "Ninguna"}
-              </Text>
-            </Box>
-          </SimpleGrid>
+      {/* Historial y selector de fechas */}
+      {historial.length > 1 && (
+        <Box bg="white" p={4} rounded="xl" shadow="md" mb={6}>
+          <HStack spacing={4} align="center">
+            <Text>Comparar desde:</Text>
+            <Select value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} maxW={52}>
+              <option value="">Elige fecha inicio</option>
+              {historial.map(h => (
+                <option key={h.fecha} value={h.fecha}>{niceDate(h.fecha)}</option>
+              ))}
+            </Select>
+            <Text>hasta:</Text>
+            <Select value={fechaFin} onChange={e => setFechaFin(e.target.value)} maxW={52}>
+              <option value="">Elige fecha fin</option>
+              {historial.map(h => (
+                <option key={h.fecha} value={h.fecha}>{niceDate(h.fecha)}</option>
+              ))}
+            </Select>
+            <Button colorScheme="green" onClick={handleComparar}>Comparar ventas</Button>
+            <Button leftIcon={<DownloadIcon />} onClick={handleExportarExcel} variant="outline" colorScheme="blue" disabled={!tabla.length}>
+              Descargar Excel
+            </Button>
+          </HStack>
         </Box>
       )}
 
-      {/* Modal para lista de códigos */}
-      <Modal isOpen={isOpen} onClose={onClose} size="xl" scrollBehavior="inside">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>
-            Códigos en {grupoSeleccionado === "SIN_GRUPO" ? "Sin grupo" : grupoSeleccionado}
-          </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <Input
-              placeholder="Buscar código..."
-              mb={3}
-              value={busqueda}
-              onChange={e => setBusqueda(e.target.value)}
-            />
-            <Button leftIcon={<CopyIcon />} size="sm" mb={4} onClick={copiarLista}>
-              Copiar lista
-            </Button>
-            <Divider mb={2} />
-            {loading
-              ? <Spinner />
-              : codigosFiltrados.length
-                ? <SimpleGrid columns={[2,3]} spacing={1}>
-                    {codigosFiltrados.map(c => (
-                      <Badge key={c} colorScheme="teal" fontSize="md" mb={1}>{c}</Badge>
-                    ))}
-                  </SimpleGrid>
-                : <Text color="gray.500">No hay códigos</Text>
-            }
-          </ModalBody>
-        </ModalContent>
-      </Modal>
+      {/* Tabla de resultados */}
+      {tabla.length > 0 && (
+        <Box bg="white" p={4} rounded="xl" shadow="lg">
+          <Heading size="md" mb={3}>Ventas entre fechas seleccionadas</Heading>
+          <Table variant="simple" size="sm">
+            <Thead>
+              <Tr>
+                <Th>Código</Th>
+                <Th>Descripción</Th>
+                <Th>Grupo</Th>
+                <Th isNumeric>Precio (€)</Th>
+                <Th isNumeric>Stock inicial</Th>
+                <Th isNumeric>Stock final</Th>
+                <Th isNumeric>Vendido</Th>
+                <Th isNumeric>Total vendido (€)</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {tabla.map(row => (
+                <Tr key={row.codigo}>
+                  <Td><Badge colorScheme="blue">{row.codigo}</Badge></Td>
+                  <Td>{row.descripcion}</Td>
+                  <Td>{row.grupo}</Td>
+                  <Td isNumeric>{Number(row.precioVenta).toFixed(2)}</Td>
+                  <Td isNumeric>{row.stockInicial}</Td>
+                  <Td isNumeric>{row.stockFinal}</Td>
+                  <Td isNumeric>{row.vendido}</Td>
+                  <Td isNumeric><b>{row.totalVenta}</b></Td>
+                </Tr>
+              ))}
+              <Tr>
+                <Td colSpan={7}><b>TOTAL VENDIDO</b></Td>
+                <Td isNumeric><b>{Number(totalVendido).toFixed(2)} €</b></Td>
+              </Tr>
+            </Tbody>
+          </Table>
+        </Box>
+      )}
+
+      {/* Instrucciones iniciales */}
+      {historial.length < 2 && (
+        <VStack bg="white" mt={8} p={8} rounded="2xl" shadow="xl" align="center">
+          <Text fontSize="xl" color="gray.600" textAlign="center">
+            Haz clic en <b>“Guardar estado actual”</b> cada vez que quieras registrar el stock.<br />
+            Cuando haya <b>dos snapshots o más</b>, podrás comparar ventas entre fechas, analizar por artículo y descargar el informe en Excel.
+          </Text>
+        </VStack>
+      )}
     </Box>
   );
 }
