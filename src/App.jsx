@@ -133,14 +133,12 @@ export default function App() {
       saveSnapshot(snapshotNow);
 
       // 3. GUARDAR SNAPSHOT EN HISTORIAL SÓLO SI CAMBIA
-      const oldHistorial = getHistorial();
-      const prev = oldHistorial.length ? oldHistorial[oldHistorial.length-1].articulos : [];
-      if (!isEqualSnapshot(articulos, prev)) {
-        saveHistorial(articulos);
-        setHistorial(getHistorial());
-        setSuccess("¡Nuevo snapshot guardado!");
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+      csaveHistorial(articulos);
+      setHistorial(getHistorial());
+      setSuccess("¡Nuevo snapshot guardado!");
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+
       } else {
         setSuccess("No hay cambios respecto al estado anterior, no se ha guardado un nuevo snapshot.");
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
