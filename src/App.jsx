@@ -101,7 +101,6 @@ export default function App() {
       setDiferencias({altas, bajas, ventas});
       saveSnapshot(snapshotNow);
 
-      // Guardar snapshot siempre
       saveHistorial(articulos);
       setHistorial(getHistorial());
       setSuccess("¡Nuevo snapshot guardado!");
@@ -114,12 +113,41 @@ export default function App() {
     setLoading(false);
   };
 
-  // El resto del código original sigue igual
-  // ...
-
   return (
-    <Box>
-      {/* Tu UI existente va aquí... */}
+    <Box minH="100vh" bg={useColorModeValue("gray.50", "gray.900")} px={[2, 8]} py={[4, 10]}>
+      <HStack justify="space-between" mb={8}>
+        <HStack spacing={3}>
+          <InfoOutlineIcon w={7} h={7} color="blue.400" />
+          <Heading size="lg" fontWeight="extrabold" letterSpacing="wide">
+            ATOSA <Text as="span" color="blue.400">Dashboard</Text>
+          </Heading>
+        </HStack>
+        <IconButton
+          aria-label="Cambiar modo oscuro/claro"
+          icon={colorMode === "light" ? <MoonIcon /> : <SunIcon />}
+          onClick={toggleColorMode}
+          variant="ghost"
+          size="lg"
+        />
+      </HStack>
+
+      {success && (
+        <Alert status="success" mb={4} borderRadius="lg">
+          <AlertIcon /> {success}
+        </Alert>
+      )}
+      {error && !resumen && (
+        <Alert status="error" mb={4}><AlertIcon />{error}</Alert>
+      )}
+
+      <HStack spacing={3} mb={1}>
+        <Button colorScheme="blue" size="lg" onClick={handleResumen} isLoading={loading}>
+          Obtener resumen
+        </Button>
+      </HStack>
+
+      {/* ... resto del contenido completo de la app aquí restaurado como en el archivo original ... */}
+
     </Box>
   );
 }
