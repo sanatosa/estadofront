@@ -1,14 +1,11 @@
 import React, { useState, useEffect } from "react";
 import {
-  Box, Button, Input, Select, Heading, HStack, Table, Thead, Tbody, Tr, Th, Td, Text, Divider, useToast,
-  VStack
+  Box, Button, Input, Select, Heading, HStack, Table, Thead, Tbody, Tr, Th, Td, Divider, useToast, Text
 } from "@chakra-ui/react";
-//... (importaciones de gráficos o componentes propios si los tienes)
-import { saveAs } from "file-saver";
 import * as XLSX from "xlsx";
 
-// -- Utilidades de formato --
-function formatNum(num) { 
+// -- Helpers de formato --
+function formatNum(num) {
   if (num == null) return "-";
   return Number(num).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -17,8 +14,7 @@ function formatInt(num) {
   return Number(num).toLocaleString('es-ES');
 }
 
-// -- Estados principales --
-// NUEVO: snapshots!
+// -- Leer snapshots del localStorage --
 const getInitialSnapshots = () => {
   const local = localStorage.getItem("atosa-snapshots");
   return local ? JSON.parse(local) : [];
@@ -26,21 +22,21 @@ const getInitialSnapshots = () => {
 
 function App() {
   const toast = useToast();
+  const API_URL = import.meta.env.VITE_API_URL || "https://estado-nl35.onrender.com/api/resumen";
   const [resumen, setResumen] = useState(null);
   const [snapshots, setSnapshots] = useState(getInitialSnapshots());
   const [selectedA, setSelectedA] = useState('');
   const [selectedB, setSelectedB] = useState('');
-  // ...otros estados que ya tengas, como filtro, edición, loading, etc.
 
-  // Persistencia de snapshots al cambiar
+  // Guardar snapshots al localStorage si cambian
   useEffect(() => {
     localStorage.setItem("atosa-snapshots", JSON.stringify(snapshots));
   }, [snapshots]);
 
-  // Obtener resumen al apretar botón (AJUSTA URL según entorno)
+  // Obtener resumen desde servidor
   const obtenerResumen = async () => {
     try {
-      const res = await fetch("http://localhost:3000/api/resumen");
+      const res = await fetch(API_URL);
       const data = await res.json();
       setResumen(data);
       toast({ status: "success", description: "Resumen actualizado", duration: 2000 });
@@ -48,8 +44,8 @@ function App() {
       toast({ status: "error", description: "Error al obtener resumen", duration: 4000 });
     }
   };
-  
-  // NUEVO: funcion guardar snapshot si es distinto al anterior
+
+  // Guardar snapshot si es diferente
   const guardarSnapshot = () => {
     if (!resumen) return;
     const nuevoSnap = {
@@ -61,36 +57,36 @@ function App() {
     const last = snapshots[snapshots.length - 1];
     if (!last || JSON.stringify(last.datos) !== JSON.stringify(nuevoSnap.datos)) {
       setSnapshots(s => [...s, nuevoSnap]);
-      toast({ status: "success", description: "Snapshot guardado", duration: 2000 });
+      toast({ status: "success", description: "Nuevo snapshot guardado", duration: 2000 });
     } else {
       toast({ status: "info", description: "El resumen no ha cambiado respecto al último snapshot.", duration: 2000 });
     }
   };
 
-  // Exportar tabla ventas a Excel (ejemplo de utilidad)
+  // Exportar tabla ventas a Excel si tu resumen la incluye
   const exportToExcel = () => {
-    // Puedes adaptar esto a tu estructura habitual
-    const ws = XLSX.utils.json_to_sheet(resumen.ventasTabla || []);
+    if (!(resumen?.ventasTabla?.length)) {
+      toast({ status: "info", description: "No hay tabla de ventas para exportar.", duration: 2000 });
+      return;
+    }
+    const ws = XLSX.utils.json_to_sheet(resumen.ventasTabla);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ventas");
-    const buf = XLSX.write(wb, {bookType: 'xlsx', type: 'array'});
-    saveAs(new Blob([buf]), "ventas.xlsx");
+    XLSX.writeFile(wb, "ventas.xlsx");
   };
 
-  // --- Zona de render ---
+  // -- Render principal --
   return (
-    <Box maxW="1200px" mx="auto" py={8}>
-      <Heading>ATOSA Resumen Dashboard</Heading>
-      <HStack mb={6} mt={4} spacing={4}>
+    <Box maxW="1200px" mx="auto" py={8} px={2}>
+      <Heading mb={5}>ATOSA Resumen Dashboard</Heading>
+      <HStack mb={6} spacing={4}>
         <Button colorScheme="blue" onClick={obtenerResumen}>Obtener Resumen</Button>
         <Button colorScheme="green" onClick={guardarSnapshot} isDisabled={!resumen}>Guardar Snapshot</Button>
         <Button colorScheme="gray" onClick={exportToExcel} isDisabled={!resumen}>Exportar Excel</Button>
-        {/* ... Añade otros botones estándar, filtros, etc */}
       </HStack>
 
-      {/* Mostrar el RESUMEN ACTUAL */}
       {resumen && (
-        <Box mt={2} mb={8}>
+        <Box mb={8}>
           <Heading size="md" mb={2}>Resumen actual:</Heading>
           <Table variant="simple" size="sm" mb={4}>
             <Thead>
@@ -116,13 +112,52 @@ function App() {
               </Tr>
             </Tbody>
           </Table>
-          {/* ... añadir más visualizaciones, ventas detalladas si tienes, gráficos, etc. */}
+          {/* Tabla de ventas detallada si existe */}
+          {Array.isArray(resumen.ventasTabla) && (
+            <Box>
+              <Heading size="sm" mt={8}>Ventas detalladas</Heading>
+              <Table variant="striped" mt={2}>
+                <Thead>
+                  <Tr>
+                    <Th>Código</Th>
+                    <Th>Descripción</Th>
+                    <Th>Grupo</Th>
+                    <Th>Precio (€)</Th>
+                    <Th>Stock inicial</Th>
+                    <Th>Stock final</Th>
+                    <Th>Vendido</Th>
+                    <Th>Total vendido (€)</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {resumen.ventasTabla.map(row => (
+                    <Tr key={row.codigo}>
+                      <Td>{row.codigo}</Td>
+                      <Td>{row.descripcion}</Td>
+                      <Td>{row.grupo}</Td>
+                      <Td>{formatNum(row.precioVenta)}</Td>
+                      <Td>{formatInt(row.stockInicial)}</Td>
+                      <Td>{formatInt(row.stockFinal)}</Td>
+                      <Td>{formatInt(row.vendido)}</Td>
+                      <Td>{formatNum(row.totalVenta)}</Td>
+                    </Tr>
+                  ))}
+                  {resumen.totalVendido !== undefined && (
+                    <Tr>
+                      <Td colSpan={7}><b>TOTAL VENDIDO</b></Td>
+                      <Td><b>{formatNum(resumen.totalVendido)}</b> €</Td>
+                    </Tr>
+                  )}
+                </Tbody>
+              </Table>
+            </Box>
+          )}
         </Box>
       )}
 
       <Divider mt={10} mb={8} />
 
-      {/* HISTORIAL DE SNAPSHOTS */}
+      {/* Historial de snapshots */}
       <Box>
         <Heading size="md" mb={4}>Historial de snapshots</Heading>
         {snapshots.length === 0 ? (
@@ -134,7 +169,6 @@ function App() {
                 <Th>Fecha</Th>
                 <Th>Total</Th>
                 <Th>Sin grupo</Th>
-                {/* Puedes añadir más columnas si tus datos lo permiten */}
               </Tr>
             </Thead>
             <Tbody>
@@ -149,7 +183,7 @@ function App() {
           </Table>
         )}
 
-        {/* COMPARADOR DE SNAPSHOTS */}
+        {/* Comparador de snapshots */}
         {snapshots.length >= 2 && (
           <Box bg="gray.50" p={4} borderRadius="md">
             <Heading size="sm" mb={2}>Comparar snapshots</Heading>
@@ -165,7 +199,6 @@ function App() {
               const snapA = snapshots.find(s => String(s.id) === String(selectedA));
               const snapB = snapshots.find(s => String(s.id) === String(selectedB));
               if (!snapA || !snapB) return null;
-              // Puedes expandir la comparación según ventas, grupos, stocks, etc.
               const allGroups = Array.from(new Set([
                 ...Object.keys(snapA.datos.porGrupo || {}),
                 ...Object.keys(snapB.datos.porGrupo || {})
@@ -208,45 +241,6 @@ function App() {
           </Box>
         )}
       </Box>
-
-      {/* --- TABLA DE VENTAS DETALLADAS, ejemplo explicativo si tu la tienes ---- */}
-      {/* 
-      <Box mt={10}>
-        <Heading size="sm">Ventas detalladas</Heading>
-        <Table variant="striped" mt={2}>
-          <Thead>
-            <Tr>
-              <Th>Código</Th>
-              <Th>Descripción</Th>
-              <Th>Grupo</Th>
-              <Th>Precio (€)</Th>
-              <Th>Stock inicial</Th>
-              <Th>Stock final</Th>
-              <Th>Vendido</Th>
-              <Th>Total vendido (€)</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {(resumen?.ventasTabla || []).map(row => (
-              <Tr key={row.codigo}>
-                <Td>{row.codigo}</Td>
-                <Td>{row.descripcion}</Td>
-                <Td>{row.grupo}</Td>
-                <Td>{formatNum(row.precioVenta)}</Td>
-                <Td>{formatInt(row.stockInicial)}</Td>
-                <Td>{formatInt(row.stockFinal)}</Td>
-                <Td>{formatInt(row.vendido)}</Td>
-                <Td>{formatNum(row.totalVenta)}</Td>
-              </Tr>
-            ))}
-            <Tr>
-              <Td colSpan={7}><b>TOTAL VENDIDO</b></Td>
-              <Td><b>{formatNum(resumen?.totalVendido)}</b> €</Td>
-            </Tr>
-          </Tbody>
-        </Table>
-      </Box>
-      */}
     </Box>
   );
 }
