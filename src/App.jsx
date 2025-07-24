@@ -203,47 +203,49 @@ export default function App() {
 
   // ====== CONSULTA CÓDIGOS DE GRUPO: calcula stats de ese grupo
   const handleVerCodigos = async grupo => {
-    setLoading(true); setCodigos([]); setError(""); setGrupoSeleccionado(grupo);
-    setModalStats(null);
-    try {
-      const url = grupo === "SIN_GRUPO"
-        ? `${BACKEND_URL}/api/sin-grupo`
-        : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
-      const res = await fetch(url);
-      const d = await res.json();
-      const codigosGrupo = d.sinGrupo || d.codigos || [];
-      setCodigos(codigosGrupo);
-      setBusqueda("");
-      onOpen();
+  setLoading(true);
+  setCodigos([]);
+  setError("");
+  setGrupoSeleccionado(grupo);
+  setModalStats(null);
+  try {
+    const url = grupo === "SIN_GRUPO"
+      ? `${BACKEND_URL}/api/sin-grupo`
+      : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
+    const res = await fetch(url);
+    const d = await res.json();
+    const codigosGrupo = d.sinGrupo || d.codigos || [];
+    setCodigos(codigosGrupo);
+    setBusqueda("");
+    onOpen();
 
-      // stats grupo
-      if (historial.length) {
-        const arts = historial[historial.length-1].articulos || [];
-        const delGrupo = arts.filter(a => 
-          (grupo==="SIN_GRUPO" ? !a.grupo : a.grupo===grupo)
-          && codigosGrupo.includes(a.codigo)
-        );
-        let stockTotal=0, valorTotal=0, precioTotal=0;
-        delGrupo.forEach(a=>{
-          stockTotal += Number(a.disponible);
-          valorTotal += Number(a.disponible)*Number(a.precioVenta||0);
-          precioTotal += Number(a.precioVenta||0);
-        });
-        const precioMedio = delGrupo.length ? precioTotal/delGrupo.length : 0;
-        // Top 3 artículos por stock
-        const topArt = [...delGrupo].sort((a,b)=>b.disponible-a.disponible).slice(0,3);
-        setModalStats({
-          stockTotal,
-          valorTotal,
-          precioMedio,
-          topArt
-        });
-      }
-    } catch {
-      setError("Error al cargar códigos");
+    // Calcular estadísticas del grupo a partir del último snapshot
+    if (historial.length) {
+      const articulosSnapshot = historial[historial.length-1].articulos || [];
+      // Solo los artículos de ese grupo Y cuyo código esté en la lista del backend
+      const delGrupo = articulosSnapshot.filter(a =>
+        (grupo === "SIN_GRUPO" ? !a.grupo : a.grupo === grupo) &&
+        codigosGrupo.includes(a.codigo)
+      );
+      let stockTotal = 0, valorTotal = 0, precioTotal = 0;
+      delGrupo.forEach(a => {
+        stockTotal += Number(a.disponible);
+        valorTotal += Number(a.disponible) * Number(a.precioVenta || 0);
+        precioTotal += Number(a.precioVenta || 0);
+      });
+      const precioMedio = delGrupo.length ? precioTotal / delGrupo.length : 0;
+      const topArt = [...delGrupo].sort((a, b) => b.disponible - a.disponible).slice(0, 3);
+      setModalStats({ stockTotal, valorTotal, precioMedio, topArt });
+    } else {
+      setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
     }
-    setLoading(false);
-  };
+  } catch {
+    setError("Error al cargar códigos");
+    setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
+  }
+  setLoading(false);
+};
+
 
   // ========== HISTORIAL Y VENTAS AVANZADO ===========
   function handleComparar() {
