@@ -160,6 +160,45 @@ export default function App() {
       stockTotal += n;
       if (n > topGrupoNum) { topGrupo = g; topGrupoNum = n; }
     });
+const handleResumen = async () => {
+  setLoading(true);
+  setError("");
+  setSuccess("");
+  setCodigos([]);
+  setGrupoSeleccionado("");
+  setDiferencias(null);
+  try {
+    const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
+    const data = await r0.json();
+    setResumen(data);
+    setError("");
+
+    const articulos = await getAllArticulos();
+    const snapshotNow = {};
+    articulos.forEach(a => snapshotNow[a.codigo] = a.disponible);
+
+    const snapshotPrev = getSnapshot();
+    const altas = [], bajas = [], ventas = [];
+    Object.keys(snapshotNow).forEach(c => {
+      if (!(c in snapshotPrev)) altas.push(c);
+      else if (snapshotNow[c] < snapshotPrev[c]) ventas.push({codigo: c, de: snapshotPrev[c], a: snapshotNow[c]});
+    });
+    Object.keys(snapshotPrev).forEach(c => { if (!(c in snapshotNow)) bajas.push(c) });
+    setDiferencias({altas, bajas, ventas});
+    saveSnapshot(snapshotNow);
+
+    // GUARDA SIEMPRE UN NUEVO SNAPSHOT
+    saveHistorial(articulos);
+    setHistorial(getHistorial());
+    setSuccess("¡Nuevo snapshot guardado!");
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+
+  } catch {
+    setError("Error al obtener datos");
+  }
+  setLoading(false);
+};
 
     return {
       stockTotal,
