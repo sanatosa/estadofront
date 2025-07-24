@@ -610,4 +610,3 @@ export default function App() {
     </Box>
   );
 }
-
