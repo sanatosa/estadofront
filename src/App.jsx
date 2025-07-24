@@ -11,7 +11,7 @@ import * as XLSX from "xlsx";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { FaBoxes, FaEuroSign, FaLayerGroup, FaExclamationTriangle, FaStar, FaCrown } from "react-icons/fa";
 
-const BACKEND_URL = "https://estado-nl35.onrender.com"; // Cambia por tu backend real
+const BACKEND_URL = "https://estado-nl35.onrender.com";
 
 const GROUP_COLORS = [
   "#3182ce", "#38a169", "#805ad5", "#00b5d8", "#ed8936", "#319795", "#d53f8c", "#ecc94b"
@@ -21,7 +21,6 @@ function groupColor(i) {
   return GROUP_COLORS[i % GROUP_COLORS.length];
 }
 
-// ======== FORMATEADOR
 function formatNum(num) {
   return Number(num).toLocaleString("es-ES", {minimumFractionDigits:2, maximumFractionDigits:2});
 }
@@ -29,7 +28,6 @@ function formatInt(num) {
   return Number(num).toLocaleString("es-ES");
 }
 
-// ======== HISTORIAL
 function getHistorial() {
   try { return JSON.parse(localStorage.getItem("atosa_historial") || "[]"); }
   catch { return []; }
@@ -43,28 +41,19 @@ function saveHistorial(snapshot) {
   localStorage.setItem("atosa_historial", JSON.stringify(historial));
 }
 
-function isEqualSnapshot(articulos1, articulos2) {
-  if (!Array.isArray(articulos1) || !Array.isArray(articulos2)) return false;
-  if (articulos1.length !== articulos2.length) return false;
-  const s1 = [...articulos1].sort((a,b)=>a.codigo.localeCompare(b.codigo));
-  const s2 = [...articulos2].sort((a,b)=>a.codigo.localeCompare(b.codigo));
-  for (let i=0; i<s1.length; ++i) {
-    const a = s1[i], b = s2[i];
-    if (
-      a.codigo !== b.codigo ||
-      a.disponible !== b.disponible ||
-      a.precioVenta !== b.precioVenta ||
-      (a.grupo || "") !== (b.grupo || "") ||
-      (a.descripcion || "") !== (b.descripcion || "")
-    ) {
-      return false;
-    }
-  }
-  return true;
+function getSnapshot() {
+  try { return JSON.parse(localStorage.getItem("atosa_snapshot") || "{}"); }
+  catch { return {}; }
+}
+function saveSnapshot(sn) {
+  localStorage.setItem("atosa_snapshot", JSON.stringify(sn));
+}
+async function getAllArticulos() {
+  const res = await fetch(`${BACKEND_URL}/api/all-articulos`);
+  return (await res.json()).articulos;
 }
 
 export default function App() {
-  // ----- Sección resumen por grupo
   const [resumen, setResumen] = useState(null);
   const [loading, setLoading] = useState(false);
   const [codigos, setCodigos] = useState([]);
@@ -77,78 +66,63 @@ export default function App() {
   const { colorMode, toggleColorMode } = useColorMode();
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  // ----- Sección histórico ventas
   const [historial, setHistorial] = useState(getHistorial());
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [tabla, setTabla] = useState([]);
   const [ventasStats, setVentasStats] = useState({});
   const [totalVendido, setTotalVendido] = useState(0);
-
   const timeoutRef = useRef();
 
-  // ========== FUNCIONES DASHBOARD RESUMEN ===========
   function copiarLista() {
     navigator.clipboard.writeText(codigos.join(", "));
   }
-
-  function getSnapshot() {
-    try { return JSON.parse(localStorage.getItem("atosa_snapshot") || "{}"); }
-    catch { return {}; }
-  }
-  function saveSnapshot(sn) {
-    localStorage.setItem("atosa_snapshot", JSON.stringify(sn));
-  }
-  async function getAllArticulos() {
-    const res = await fetch(`${BACKEND_URL}/api/all-articulos`);
-    return (await res.json()).articulos;
-  }
-
-  // === "Obtener resumen" también guarda snapshot SOLO si hay cambios ===
-  const handleResumen = async () => {
+  // ====== CONSULTA CÓDIGOS DE GRUPO: calcula stats de ese grupo
+  const handleVerCodigos = async grupo => {
     setLoading(true);
-    setError("");
-    setSuccess("");
     setCodigos([]);
-    setGrupoSeleccionado("");
-    setDiferencias(null);
+    setError("");
+    setGrupoSeleccionado(grupo);
+    setModalStats(null);
     try {
-      const r0 = await fetch(`${BACKEND_URL}/api/resumen`);
-      const data = await r0.json();
-      setResumen(data);
-      setError("");
+      const url = grupo === "SIN_GRUPO"
+        ? `${BACKEND_URL}/api/sin-grupo`
+        : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
+      const res = await fetch(url);
+      const d = await res.json();
+      const codigosGrupo = d.sinGrupo || d.codigos || [];
+      setCodigos(codigosGrupo);
+      setBusqueda("");
+      onOpen();
 
-      const articulos = await getAllArticulos();
-      const snapshotNow = {};
-      articulos.forEach(a => snapshotNow[a.codigo] = a.disponible);
-
-      const snapshotPrev = getSnapshot();
-      const altas = [], bajas = [], ventas = [];
-      Object.keys(snapshotNow).forEach(c => {
-        if (!(c in snapshotPrev)) altas.push(c);
-        else if (snapshotNow[c] < snapshotPrev[c]) ventas.push({codigo:c, de:snapshotPrev[c], a:snapshotNow[c]});
-      });
-      Object.keys(snapshotPrev).forEach(c => { if (!(c in snapshotNow)) bajas.push(c) });
-      setDiferencias({altas,bajas,ventas});
-      saveSnapshot(snapshotNow);
-
-      // 3. GUARDAR SNAPSHOT EN HISTORIAL SÓLO SI CAMBIA
-      csaveHistorial(articulos);
-      setHistorial(getHistorial());
-      setSuccess("¡Nuevo snapshot guardado!");
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
-
+      // Calcular estadísticas del grupo a partir del último snapshot del historial
+      if (historial.length) {
+        const articulosSnapshot = historial[historial.length - 1].articulos || [];
+        // Solo los artículos del grupo actual y cuyo código esté en la lista de backend
+        const delGrupo = articulosSnapshot.filter(a =>
+          (grupo === "SIN_GRUPO" ? !a.grupo : a.grupo === grupo) &&
+          codigosGrupo.includes(a.codigo)
+        );
+        let stockTotal = 0, valorTotal = 0, precioTotal = 0;
+        delGrupo.forEach(a => {
+          stockTotal += Number(a.disponible);
+          valorTotal += Number(a.disponible) * Number(a.precioVenta || 0);
+          precioTotal += Number(a.precioVenta || 0);
+        });
+        const precioMedio = delGrupo.length ? precioTotal / delGrupo.length : 0;
+        const topArt = [...delGrupo].sort((a, b) => b.disponible - a.disponible).slice(0, 3);
+        setModalStats({ stockTotal, valorTotal, precioMedio, topArt });
       } else {
-        setSuccess("No hay cambios respecto al estado anterior, no se ha guardado un nuevo snapshot.");
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => setSuccess(""), 3000);
+        setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
       }
     } catch {
-      setError("Error al obtener datos");
+      setError("Error al cargar códigos");
+      setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
     }
     setLoading(false);
   };
+
+  // ... [Aquí irán funciones como getGeneralStats, handleComparar, handleExportarExcel, handleResetHistorial, niceDate, etc.]
 
   // ======== ESTADÍSTICAS GENERALES
   function getGeneralStats() {
@@ -200,52 +174,6 @@ export default function App() {
       artMasCaro
     };
   }
-
-  // ====== CONSULTA CÓDIGOS DE GRUPO: calcula stats de ese grupo
-  const handleVerCodigos = async grupo => {
-  setLoading(true);
-  setCodigos([]);
-  setError("");
-  setGrupoSeleccionado(grupo);
-  setModalStats(null);
-  try {
-    const url = grupo === "SIN_GRUPO"
-      ? `${BACKEND_URL}/api/sin-grupo`
-      : `${BACKEND_URL}/api/grupo/${encodeURIComponent(grupo)}`;
-    const res = await fetch(url);
-    const d = await res.json();
-    const codigosGrupo = d.sinGrupo || d.codigos || [];
-    setCodigos(codigosGrupo);
-    setBusqueda("");
-    onOpen();
-
-    // Calcular estadísticas del grupo a partir del último snapshot
-    if (historial.length) {
-      const articulosSnapshot = historial[historial.length-1].articulos || [];
-      // Solo los artículos de ese grupo Y cuyo código esté en la lista del backend
-      const delGrupo = articulosSnapshot.filter(a =>
-        (grupo === "SIN_GRUPO" ? !a.grupo : a.grupo === grupo) &&
-        codigosGrupo.includes(a.codigo)
-      );
-      let stockTotal = 0, valorTotal = 0, precioTotal = 0;
-      delGrupo.forEach(a => {
-        stockTotal += Number(a.disponible);
-        valorTotal += Number(a.disponible) * Number(a.precioVenta || 0);
-        precioTotal += Number(a.precioVenta || 0);
-      });
-      const precioMedio = delGrupo.length ? precioTotal / delGrupo.length : 0;
-      const topArt = [...delGrupo].sort((a, b) => b.disponible - a.disponible).slice(0, 3);
-      setModalStats({ stockTotal, valorTotal, precioMedio, topArt });
-    } else {
-      setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
-    }
-  } catch {
-    setError("Error al cargar códigos");
-    setModalStats({ stockTotal: 0, valorTotal: 0, precioMedio: 0, topArt: [] });
-  }
-  setLoading(false);
-};
-
 
   // ========== HISTORIAL Y VENTAS AVANZADO ===========
   function handleComparar() {
@@ -356,7 +284,6 @@ export default function App() {
 
   // --- General stats (tarjetas)
   const stats = getGeneralStats();
-
   return (
     <Box minH="100vh" bg={bg} px={[2, 8]} py={[4, 10]}>
       {/* Header */}
@@ -683,3 +610,4 @@ export default function App() {
     </Box>
   );
 }
+
